@@ -1,0 +1,296 @@
+name: Build InstallerX System Module
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: "Upstream stable tag to build (leave empty for latest stable)"
+        required: false
+        type: string
+  schedule:
+    - cron: "17 */6 * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/system-module-stable.yml"
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: installerx-system-module
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: wxxsfxyzm/InstallerX-Revived
+  MODULE_ID: com.android.packageinstaller
+  MODULE_NAME: InstallerX Revived System
+  MODULE_PREFIX: InstallerX-Revived-System-AOSP
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve upstream stable tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_TAG: ${{ inputs.version_tag || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${MANUAL_TAG}" ]]; then
+            TAG="${MANUAL_TAG}"
+          else
+            TAG="$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq '.tag_name')"
+          fi
+
+          if [[ ! "${TAG}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Refusing non-stable tag: ${TAG}" >&2
+            exit 1
+          fi
+
+          RELEASE_TAG="system-${TAG}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "Module release ${RELEASE_TAG} already exists; nothing to do."
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Checkout upstream stable source
+        if: steps.upstream.outputs.skip != 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: wxxsfxyzm/InstallerX-Revived
+          ref: ${{ steps.upstream.outputs.tag }}
+          fetch-depth: 0
+          path: upstream
+
+      - name: Set up JDK 25
+        if: steps.upstream.outputs.skip != 'true'
+        uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: "25"
+
+      - name: Set up Gradle
+        if: steps.upstream.outputs.skip != 'true'
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+          build-scan-publish: false
+
+      - name: Configure optional persistent signing key
+        if: steps.upstream.outputs.skip != 'true'
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.SYSTEM_SIGNING_KEY_STORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SYSTEM_SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SYSTEM_SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SYSTEM_SIGNING_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream
+
+          if [[ -z "${KEYSTORE_B64:-}" || -z "${STORE_PASSWORD:-}" || -z "${KEY_ALIAS:-}" || -z "${KEY_PASSWORD:-}" ]]; then
+            echo "mode=debug" >> "${GITHUB_OUTPUT}"
+            echo "No SYSTEM_SIGNING_* secrets configured. Upstream Gradle will use its debug signing fallback."
+            exit 0
+          fi
+
+          mkdir -p keystore
+          printf '%s' "${KEYSTORE_B64}" | base64 --decode > keystore/system-installer.jks
+          cat > keystore.properties <<EOF
+          storeFile=keystore/system-installer.jks
+          storePassword=${STORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          EOF
+          chmod 600 keystore/system-installer.jks keystore.properties
+          echo "mode=custom" >> "${GITHUB_OUTPUT}"
+
+      - name: Build stable APK as AOSP PackageInstaller
+        if: steps.upstream.outputs.skip != 'true'
+        env:
+          GITHUB_ACTOR: ${{ secrets.GH_PACKAGES_USER || github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+          VERSION_TAG: ${{ steps.upstream.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream
+          chmod +x gradlew
+          ./gradlew assembleStableRelease \
+            -PAPP_ID="com.android.packageinstaller" \
+            -PVERSION_NAME="${VERSION_TAG}"
+
+      - name: Verify APK and collect metadata
+        if: steps.upstream.outputs.skip != 'true'
+        id: apk
+        env:
+          VERSION_TAG: ${{ steps.upstream.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$(find upstream/app/build/outputs/apk -type f -path '*/stable/release/*.apk' | head -n 1)"
+          if [[ -z "${APK}" || ! -f "${APK}" ]]; then
+            echo "Stable release APK not found" >&2
+            find upstream/app/build/outputs/apk -maxdepth 5 -type f -print || true
+            exit 1
+          fi
+
+          AAPT="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          if [[ -z "${AAPT}" || -z "${APKSIGNER}" ]]; then
+            echo "aapt/apksigner not found in Android SDK" >&2
+            exit 1
+          fi
+
+          BADGING="$("${AAPT}" dump badging "${APK}" | head -n 1)"
+          PACKAGE_NAME="$(sed -n "s/.*package: name='\([^']*\)'.*/\1/p" <<<"${BADGING}")"
+          VERSION_CODE="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"${BADGING}")"
+          VERSION_NAME="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"${BADGING}")"
+
+          echo "package=${PACKAGE_NAME}"
+          echo "versionCode=${VERSION_CODE}"
+          echo "versionName=${VERSION_NAME}"
+
+          [[ "${PACKAGE_NAME}" == "com.android.packageinstaller" ]] || {
+            echo "Unexpected package name: ${PACKAGE_NAME}" >&2
+            exit 1
+          }
+          [[ "${VERSION_NAME}" == "${VERSION_TAG}" ]] || {
+            echo "Unexpected versionName: ${VERSION_NAME}; wanted ${VERSION_TAG}" >&2
+            exit 1
+          }
+          [[ "${VERSION_CODE}" =~ ^[0-9]+$ ]] || {
+            echo "Invalid versionCode: ${VERSION_CODE}" >&2
+            exit 1
+          }
+
+          "${APKSIGNER}" verify --verbose --print-certs "${APK}"
+
+          echo "path=${APK}" >> "${GITHUB_OUTPUT}"
+          echo "version_code=${VERSION_CODE}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=$(sha256sum "${APK}" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+
+      - name: Build APatch / KernelSU / Magisk module
+        if: steps.upstream.outputs.skip != 'true'
+        id: module
+        env:
+          VERSION_TAG: ${{ steps.upstream.outputs.tag }}
+          VERSION_CODE: ${{ steps.apk.outputs.version_code }}
+          APK_PATH: ${{ steps.apk.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MODULE_DIR="${RUNNER_TEMP}/installerx-system-module"
+          ZIP_NAME="${MODULE_PREFIX}-${VERSION_TAG}.zip"
+          ZIP_PATH="${GITHUB_WORKSPACE}/${ZIP_NAME}"
+          rm -rf "${MODULE_DIR}"
+          mkdir -p "${MODULE_DIR}/system/priv-app/PackageInstaller"
+
+          cp "${APK_PATH}" "${MODULE_DIR}/system/priv-app/PackageInstaller/PackageInstaller.apk"
+
+          cat > "${MODULE_DIR}/module.prop" <<EOF
+          id=${MODULE_ID}
+          name=${MODULE_NAME}
+          version=${VERSION_TAG}
+          versionCode=${VERSION_CODE}
+          author=wxxsfxyzm / c45v3 auto-build
+          description=InstallerX Revived ${VERSION_TAG} as AOSP system package installer, auto-built from the upstream stable tag.
+          updateJson=https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/update.json
+          EOF
+
+          cat > "${MODULE_DIR}/action.sh" <<'EOF'
+          #!/system/bin/sh
+          am start -n com.android.packageinstaller/com.rosan.installer.ui.activity.SettingsActivity
+          EOF
+
+          chmod 0644 "${MODULE_DIR}/module.prop"
+          chmod 0644 "${MODULE_DIR}/system/priv-app/PackageInstaller/PackageInstaller.apk"
+          chmod 0755 "${MODULE_DIR}/action.sh"
+
+          (
+            cd "${MODULE_DIR}"
+            zip -9 -r "${ZIP_PATH}" .
+          )
+
+          echo "zip_name=${ZIP_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "zip_path=${ZIP_PATH}" >> "${GITHUB_OUTPUT}"
+          echo "zip_sha256=$(sha256sum "${ZIP_PATH}" | awk '{print $1}')" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate update metadata and release notes
+        if: steps.upstream.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_TAG: ${{ steps.upstream.outputs.tag }}
+          RELEASE_TAG: ${{ steps.upstream.outputs.release_tag }}
+          VERSION_CODE: ${{ steps.apk.outputs.version_code }}
+          ZIP_NAME: ${{ steps.module.outputs.zip_name }}
+          APK_SHA256: ${{ steps.apk.outputs.sha256 }}
+          ZIP_SHA256: ${{ steps.module.outputs.zip_sha256 }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+          ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${ZIP_NAME}"
+
+          jq -n \
+            --arg version "${VERSION_TAG}" \
+            --argjson versionCode "${VERSION_CODE}" \
+            --arg zipUrl "${ZIP_URL}" \
+            --arg changelog "${RELEASE_URL}" \
+            '{version:$version, versionCode:$versionCode, zipUrl:$zipUrl, changelog:$changelog}' \
+            > update.json
+
+          gh api "repos/${UPSTREAM_REPO}/releases/tags/${VERSION_TAG}" --jq '.body // ""' > upstream-changelog.md
+
+          cat > release-notes.md <<EOF
+          Automated AOSP system-package-installer build from upstream stable **${VERSION_TAG}**.
+
+          - Package: `com.android.packageinstaller`
+          - Module ID: `${MODULE_ID}`
+          - APK versionCode: `${VERSION_CODE}`
+          - Signing mode: `${SIGNING_MODE}`
+          - APK SHA-256: `${APK_SHA256}`
+          - Module ZIP SHA-256: `${ZIP_SHA256}`
+          - Source tag: https://github.com/${UPSTREAM_REPO}/releases/tag/${VERSION_TAG}
+
+          **Warning:** replacing the system package installer is a high-risk modification. This build is intended for devices where the package name/path match and signature restrictions are already handled.
+
+          ## Upstream changelog
+
+          EOF
+          cat upstream-changelog.md >> release-notes.md
+
+      - name: Publish module release
+        if: steps.upstream.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_TAG: ${{ steps.upstream.outputs.tag }}
+          RELEASE_TAG: ${{ steps.upstream.outputs.release_tag }}
+          ZIP_PATH: ${{ steps.module.outputs.zip_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${RELEASE_TAG}" \
+            "${ZIP_PATH}" \
+            update.json \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "InstallerX Revived System ${VERSION_TAG}" \
+            --notes-file release-notes.md
