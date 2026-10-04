@@ -142,7 +142,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          APK="$(find upstream/app/build/outputs/apk -type f -path '*/stable/release/*.apk' | head -n 1)"
+          APK="$(find upstream/app/build/outputs/apk -type f -ipath '*/stable/release/*.apk' | head -n 1)"
           if [[ -z "${APK}" || ! -f "${APK}" ]]; then
             echo "Stable release APK not found" >&2
             find upstream/app/build/outputs/apk -maxdepth 5 -type f -print || true
