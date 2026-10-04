@@ -277,6 +277,17 @@ jobs:
           EOF
           cat upstream-changelog.md >> release-notes.md
 
+      - name: Upload workflow artifacts
+        if: steps.upstream.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: InstallerX-System-${{ steps.upstream.outputs.tag }}
+          path: |
+            ${{ steps.module.outputs.zip_path }}
+            update.json
+          retention-days: 30
+          if-no-files-found: error
+
       - name: Publish module release
         if: steps.upstream.outputs.skip != 'true'
         env:
