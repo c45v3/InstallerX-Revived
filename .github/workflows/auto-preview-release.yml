@@ -22,6 +22,7 @@ on:
       - 'gradle/**'
       - 'gradlew'
       - 'gradlew.bat'
+      - '.github/workflows/auto-preview-release.yml'
 
 jobs:
   build_and_prerelease:
@@ -68,58 +69,68 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Decode and set up signing key
+      - name: Configure system module signing key
         env:
-          SIGNING_KEY_STORE_BASE64: ${{ secrets.SIGNING_KEY_STORE_BASE64 }}
-          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SYSTEM_SIGNING_KEY_STORE_BASE64: ${{ secrets.SYSTEM_SIGNING_KEY_STORE_BASE64 }}
+          SYSTEM_SIGNING_STORE_PASSWORD: ${{ secrets.SYSTEM_SIGNING_STORE_PASSWORD }}
+          SYSTEM_SIGNING_KEY_ALIAS: ${{ secrets.SYSTEM_SIGNING_KEY_ALIAS }}
+          SYSTEM_SIGNING_KEY_PASSWORD: ${{ secrets.SYSTEM_SIGNING_KEY_PASSWORD }}
         run: |
-          if [ -z "${SIGNING_STORE_PASSWORD:-}" ] || [ -z "${SIGNING_KEY_STORE_BASE64:-}" ] || [ -z "${SIGNING_KEY_PASSWORD:-}" ] || [ -z "${SIGNING_KEY_ALIAS:-}" ]; then
-            exit 0
+          if [ -z "${SYSTEM_SIGNING_STORE_PASSWORD:-}" ] || [ -z "${SYSTEM_SIGNING_KEY_STORE_BASE64:-}" ] || [ -z "${SYSTEM_SIGNING_KEY_PASSWORD:-}" ] || [ -z "${SYSTEM_SIGNING_KEY_ALIAS:-}" ]; then
+            echo "::error::Missing SYSTEM_SIGNING_* secrets"
+            exit 1
           fi
           mkdir -p keystore
-          echo "${SIGNING_KEY_STORE_BASE64}" | base64 --decode > keystore/carlyu.jks
-          echo "storeFile=keystore/carlyu.jks" > keystore.properties
-          echo "keyAlias=${SIGNING_KEY_ALIAS}" >> keystore.properties
-          echo "keyPassword=${SIGNING_KEY_PASSWORD}" >> keystore.properties
-          echo "storePassword=${SIGNING_STORE_PASSWORD}" >> keystore.properties
+          echo "${SYSTEM_SIGNING_KEY_STORE_BASE64}" | base64 --decode > keystore/system-installer.jks
+          echo "storeFile=keystore/system-installer.jks" > keystore.properties
+          echo "keyAlias=${SYSTEM_SIGNING_KEY_ALIAS}" >> keystore.properties
+          echo "keyPassword=${SYSTEM_SIGNING_KEY_PASSWORD}" >> keystore.properties
+          echo "storePassword=${SYSTEM_SIGNING_STORE_PASSWORD}" >> keystore.properties
+          chmod 600 keystore.properties keystore/system-installer.jks
 
-      - name: Build Preview Release APK
+      - name: Build release APKs (publish Stable flavor)
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew assemblePreviewRelease
+        run: ./gradlew assembleStableRelease
 
-      - name: Find and Rename Preview APKs
-        id: rename_apks
+      - name: Build system APK and package module
+        id: module
+        shell: bash
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PROJECT_NAME="InstallerX-Revived"
-          # Pure version tag e.g., 26.03.1a2b3c4
+          set -euo pipefail
+          mkdir -p dist
+          NORMAL_APK="$(find app/build/outputs/apk -type f -ipath '*/stable/release/*.apk' -print -quit)"
+          test -n "$NORMAL_APK"
           VERSION_TAG="${{ steps.vars.outputs.YY_MM }}.${{ steps.vars.outputs.SHORT_SHA }}"
-
-          APK_DIR=$(find app/build/outputs/apk -type d | grep -iE '/preview/release$' | head -n 1)
-          if [ -z "$APK_DIR" ]; then
-            echo "ERROR: Preview APK output directory not found"
-            ls -R app/build/outputs/apk
-            exit 1
-          fi
-          APK_PATH=$(find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" | head -n 1)
-
-          if [ -z "$APK_PATH" ]; then
-            echo "ERROR: Could not find the preview APK!"
-            ls -R app/build/outputs/apk
-            exit 1
-          fi
-
-          NEW_APK_NAME="${PROJECT_NAME}-online-${VERSION_TAG}.apk"
-          NEW_APK_PATH="${APK_DIR}/${NEW_APK_NAME}"
-
-          mv "$APK_PATH" "$NEW_APK_PATH"
-
-          echo "apk=${NEW_APK_PATH}" >> $GITHUB_OUTPUT
-          echo "version_tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
-
+          NORMAL_OUT="dist/InstallerX-Revived-online-${VERSION_TAG}.apk"
+          cp "$NORMAL_APK" "$NORMAL_OUT"
+          ./gradlew assembleStableRelease -PAPP_ID=com.android.packageinstaller
+          SYSTEM_APK="$(find app/build/outputs/apk -type f -ipath '*/stable/release/*.apk' -print -quit)"
+          test -n "$SYSTEM_APK"
+          AAPT="$(find "${ANDROID_HOME}/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$AAPT" && test -n "$APKSIGNER"
+          BADGING="$("$AAPT" dump badging "$SYSTEM_APK" | sed -n '1p')"
+          echo "$BADGING" | grep -q "name='com.android.packageinstaller'"
+          VERSION_CODE="$(echo "$BADGING" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")"
+          [[ "$VERSION_CODE" =~ ^[0-9]+$ ]]
+          "$APKSIGNER" verify --print-certs "$NORMAL_OUT"
+          "$APKSIGNER" verify --print-certs "$SYSTEM_APK"
+          MODULE_DIR="$(mktemp -d)"
+          mkdir -p "$MODULE_DIR/system/priv-app/PackageInstaller"
+          cp "$SYSTEM_APK" "$MODULE_DIR/system/priv-app/PackageInstaller/PackageInstaller.apk"
+          printf 'id=com.android.packageinstaller\nname=InstallerX Revived System\nversion=%s\nversionCode=%s\nauthor=c45v3\ndescription=InstallerX Revived stable flavor as system PackageInstaller\n' "$VERSION_TAG" "$VERSION_CODE" > "$MODULE_DIR/module.prop"
+          printf '#!/system/bin/sh\nam start -n com.android.packageinstaller/com.rosan.installer.ui.activity.SettingsActivity\n' > "$MODULE_DIR/action.sh"
+          chmod 755 "$MODULE_DIR/action.sh"
+          MODULE_OUT="dist/InstallerX-Revived-System-AOSP-${VERSION_TAG}.zip"
+          (cd "$MODULE_DIR" && zip -q -9 -r "$GITHUB_WORKSPACE/$MODULE_OUT" .)
+          echo "apk=$NORMAL_OUT" >> "$GITHUB_OUTPUT"
+          echo "module_zip=$MODULE_OUT" >> "$GITHUB_OUTPUT"
+          echo "version_tag=$VERSION_TAG" >> "$GITHUB_OUTPUT"
       - name: Delete old preview release and tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -139,7 +150,7 @@ jobs:
         run: |
           # Match pure number stable tags, ignoring those with hex hashes
           PREV_TAG=$(git tag --list | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' | sort -Vr | head -n 1)
-          CURR_TAG="${{ steps.rename_apks.outputs.version_tag }}"
+          CURR_TAG="${{ steps.module.outputs.version_tag }}"
 
           if [ -z "$PREV_TAG" ]; then
             LOG_RANGE=""
@@ -186,7 +197,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           name: "InstallerX Revived Preview (${{ steps.vars.outputs.SHORT_SHA }})"
-          tag_name: "${{ steps.rename_apks.outputs.version_tag }}"
+          tag_name: "${{ steps.module.outputs.version_tag }}"
           target_commitish: ${{ github.sha }}
           body: |
             ## 这是自动构建的最新测试版。
@@ -201,18 +212,8 @@ jobs:
             ${{ steps.changelog.outputs.changelog_body }}${{ steps.changelog.outputs.changelog_full_link }}
           prerelease: true
           files: |
-            ${{ steps.rename_apks.outputs.apk }}
-
-      - name: Upload to Telegram
-        env:
-          API_ID: ${{ secrets.API_ID }}
-          API_HASH: ${{ secrets.API_HASH }}
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-          BOT_CI_SESSION: ${{ secrets.BOT_CI_SESSION }}
-        run: |
-          pip3 install telethon
-          python3 .github/bot.py "${{ steps.rename_apks.outputs.apk }}"
+            ${{ steps.module.outputs.apk }}
+            ${{ steps.module.outputs.module_zip }}
 
       - name: Upload mapping
         uses: actions/upload-artifact@v7

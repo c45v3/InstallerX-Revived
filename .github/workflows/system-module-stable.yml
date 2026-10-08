@@ -88,7 +88,7 @@ jobs:
           cache-read-only: false
           build-scan-publish: false
 
-      - name: Configure optional persistent signing key
+      - name: Configure system module signing key
         if: steps.upstream.outputs.skip != 'true'
         id: signing
         env:
@@ -102,9 +102,8 @@ jobs:
           cd upstream
 
           if [[ -z "${KEYSTORE_B64:-}" || -z "${STORE_PASSWORD:-}" || -z "${KEY_ALIAS:-}" || -z "${KEY_PASSWORD:-}" ]]; then
-            echo "mode=debug" >> "${GITHUB_OUTPUT}"
-            echo "No SYSTEM_SIGNING_* secrets configured. Upstream Gradle will use its debug signing fallback."
-            exit 0
+            echo "::error::Required SYSTEM_SIGNING_* secrets are missing."
+            exit 1
           fi
 
           mkdir -p keystore
