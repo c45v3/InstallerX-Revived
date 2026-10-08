@@ -7,11 +7,14 @@ import com.rosan.installer.data.session.repository.InstallerSessionRepositoryImp
 import com.rosan.installer.domain.engine.model.install.InstallPhase
 import com.rosan.installer.domain.engine.model.install.SessionMode
 import com.rosan.installer.domain.engine.model.packageinfo.AppEntity
+import com.rosan.installer.domain.engine.model.packageinfo.LibraryAnalysisResult
 import com.rosan.installer.domain.engine.model.packageinfo.PackageAnalysisResult
 import com.rosan.installer.domain.engine.model.packageinfo.PackageIdentityStatus
 import com.rosan.installer.domain.engine.model.packageinfo.SignatureMatchStatus
 import com.rosan.installer.domain.engine.model.source.DataEntity
 import com.rosan.installer.domain.engine.model.source.DataType
+import com.rosan.installer.domain.engine.repository.LibraryAnalysisRepository
+import com.rosan.installer.domain.engine.usecase.AnalyzeLibrariesUseCase
 import com.rosan.installer.domain.engine.usecase.GetAppIconColorUseCase
 import com.rosan.installer.domain.engine.usecase.GetAppIconUseCase
 import com.rosan.installer.domain.engine.usecase.GetAppLabelUseCase
@@ -40,6 +43,38 @@ import kotlinx.coroutines.test.setMain
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class InstallerSelectionTest {
+    @Test
+    fun `library preview follows split selection and reuses only the same analyzed sources`() = fixture { scope ->
+        val app = base("base.apk", true)
+        val selectedSplit = split("split.arm64.apk", true)
+        val otherSplit = split("split.x86.apk", false)
+        load(listOf(group(app, selectedSplit, otherSplit)))
+        scope.runCurrent()
+        vm.dispatch(InstallerViewAction.InstallPrepare)
+        scope.runCurrent()
+        vm.dispatch(InstallerViewAction.ShowLibraries)
+        scope.runCurrent()
+        assertEquals(listOf(app.app, selectedSplit.app), libraryApps)
+        assertEquals(1, libraryCalls)
+        vm.dispatch(InstallerViewAction.HideLibraries)
+        vm.dispatch(InstallerViewAction.ShowLibraries)
+        scope.runCurrent()
+        assertEquals(1, libraryCalls)
+        vm.dispatch(InstallerViewAction.HideLibraries)
+        toggle(selectedSplit, true)
+        toggle(otherSplit, true)
+        vm.dispatch(InstallerViewAction.ShowLibraries)
+        scope.runCurrent()
+        assertEquals(listOf(app.app, otherSplit.app), libraryApps)
+        assertEquals(2, libraryCalls)
+        vm.dispatch(InstallerViewAction.RetryLibraries)
+        scope.runCurrent()
+        assertEquals(3, libraryCalls)
+        vm.dispatch(InstallerViewAction.HideLibraries)
+        scope.runCurrent()
+        assertEquals(false, vm.uiState.value.showLibraries)
+    }
+
     @Test
     fun `restoring mixed APK success uses the selected app regardless of module order`() {
         for (moduleFirst in listOf(true, false)) {
@@ -512,8 +547,17 @@ class InstallerSelectionTest {
 
     private class Harness {
         val session = InstallerSessionRepositoryImpl("selection-test") {}
+        var libraryCalls = 0
+        var libraryApps: List<AppEntity> = emptyList()
         val vm = InstallerViewModel(
             session = session,
+            analyzeLibraries = AnalyzeLibrariesUseCase(object : LibraryAnalysisRepository {
+                override suspend fun analyze(apps: List<AppEntity>): LibraryAnalysisResult {
+                    libraryCalls++
+                    libraryApps = apps
+                    return LibraryAnalysisResult()
+                }
+            }),
             appSettingsRepo = stub { name, _ ->
                 when (name) {
                     "getPreferencesFlow" -> flowOf(testPreferences())

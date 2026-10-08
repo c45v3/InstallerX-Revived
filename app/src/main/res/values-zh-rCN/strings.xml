@@ -981,4 +981,19 @@
     <string name="unarchive_action_app_settings">应用设置</string>
     <string name="installer_result_pending">已有安装任务正在进行，请等待结果后重试。</string>
     <string name="theme_settings_predictive_back_animation_aosp">AOSP</string>
+
+    <!-- Offline native-library preview -->
+    <string name="installer_libraries">查看库</string>
+    <string name="installer_libraries_desc">查看所选 APK 中的原生库</string>
+    <string name="installer_libraries_hint">仅扫描所选 APK。标签按名称匹配，不代表完整 SDK 检测。点击条目复制库名。</string>
+    <string name="installer_libraries_search">搜索库名、标签或 APK</string>
+    <string name="installer_libraries_all">全部</string>
+    <string name="installer_libraries_count">%1$d / %2$d 个库</string>
+    <string name="installer_libraries_empty">在可读取的所选 APK 中未发现原生库。</string>
+    <string name="installer_libraries_no_matches">没有符合筛选条件的库。</string>
+    <string name="installer_libraries_failed">库分析失败，不影响安装。</string>
+    <string name="installer_libraries_partial">无法读取：%1$s。结果可能不完整。</string>
+    <string name="installer_libraries_rules_unavailable">库识别规则不可用，显示原始库名。</string>
+    <string name="installer_libraries_retry">重试</string>
+    <string name="installer_libraries_possible">可能是：%1$s</string>
 </resources>

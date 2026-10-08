@@ -51,6 +51,7 @@ import com.rosan.installer.ui.page.miuix.installer.sheetcontent.InstallCompleted
 import com.rosan.installer.ui.page.miuix.installer.sheetcontent.InstallConfirmContent
 import com.rosan.installer.ui.page.miuix.installer.sheetcontent.InstallExtendedMenuContent
 import com.rosan.installer.ui.page.miuix.installer.sheetcontent.InstallFailedContent
+import com.rosan.installer.ui.page.miuix.installer.sheetcontent.InstallLibrariesContent
 import com.rosan.installer.ui.page.miuix.installer.sheetcontent.InstallModuleContent
 import com.rosan.installer.ui.page.miuix.installer.sheetcontent.InstallPrepareContent
 import com.rosan.installer.ui.page.miuix.installer.sheetcontent.InstallPreparePermissionContent
@@ -103,6 +104,7 @@ fun MiuixInstallerPage(
     val stage = uiState.stage
     val settings = uiState.viewSettings
     val showSettings = uiState.showMiuixSheetRightActionSettings
+    val showLibraries = uiState.showLibraries
     val showPermissions = uiState.showMiuixPermissionList
     val temporarySeedColor = uiState.seedColor
     val currentPackageName = uiState.currentPackageName
@@ -154,6 +156,8 @@ fun MiuixInstallerPage(
         is InstallerStage.InstallExtendedMenu -> stringResource(R.string.config_label_install_options)
 
         is InstallerStage.InstallPrepare -> when {
+            showLibraries -> stringResource(R.string.installer_libraries)
+
             showSettings -> stringResource(R.string.installer_settings)
 
             showPermissions -> stringResource(R.string.permission_list)
@@ -349,10 +353,12 @@ fun MiuixInstallerPage(
 
                         is InstallerStage.InstallPrepare -> {
                             MiuixBackButton(
-                                icon = if (showSettings || showPermissions || preparedFromTypeChoice) AppMiuixIcons.Back else AppMiuixIcons.Close,
+                                icon = if (showLibraries || showSettings || showPermissions || preparedFromTypeChoice) AppMiuixIcons.Back else AppMiuixIcons.Close,
                                 iconTint = MiuixTheme.colorScheme.onSurface,
                                 onClick = {
-                                    if (showSettings) {
+                                    if (showLibraries) {
+                                        viewModel.dispatch(InstallerViewAction.HideLibraries)
+                                    } else if (showSettings) {
                                         viewModel.dispatch(InstallerViewAction.HideMiuixSheetRightActionSettings)
                                     } else if (showPermissions) {
                                         viewModel.dispatch(InstallerViewAction.HideMiuixPermissionList)
@@ -581,6 +587,7 @@ fun MiuixInstallerPage(
 
                         is InstallerStage.InstallPrepare -> {
                             val prepareSubState = when {
+                                showLibraries -> "libraries"
                                 showSettings -> "settings"
                                 showPermissions -> "permissions"
                                 else -> "prepare"
@@ -595,6 +602,8 @@ fun MiuixInstallerPage(
                                 },
                             ) { subState ->
                                 when (subState) {
+                                    "libraries" -> InstallLibrariesContent(viewModel)
+
                                     "settings" -> {
                                         PrepareSettingsContent(
                                             viewModel = viewModel,

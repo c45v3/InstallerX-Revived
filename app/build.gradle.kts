@@ -202,6 +202,7 @@ dependencies {
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 
+    implementation(libs.libchecker.rules)
     implementation(libs.commons.compress)
     implementation(libs.xz)
     implementation(libs.androidx.profileinstaller)

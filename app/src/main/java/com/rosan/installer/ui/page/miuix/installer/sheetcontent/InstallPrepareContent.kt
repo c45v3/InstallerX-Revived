@@ -480,6 +480,13 @@ fun InstallPrepareContent(
                         .padding(vertical = 8.dp),
                     colors = miuixSheetCardColors(),
                 ) {
+                    if (selectedEntities.any { it is AppEntity.BaseEntity || it is AppEntity.SplitEntity }) {
+                        MiuixNavigationItemWidget(
+                            title = stringResource(R.string.installer_libraries),
+                            description = stringResource(R.string.installer_libraries_desc),
+                            onClick = { viewModel.dispatch(InstallerViewAction.ShowLibraries) },
+                        )
+                    }
                     // Permissions List
                     if (rawBaseEntity?.permissions?.isNotEmpty() == true) {
                         MiuixNavigationItemWidget(

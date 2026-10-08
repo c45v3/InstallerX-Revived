@@ -6,6 +6,7 @@ import com.rosan.installer.data.engine.parser.ApkParser
 import com.rosan.installer.data.engine.parser.CommonsZipFileProvider
 import com.rosan.installer.data.engine.parser.FileTypeDetector
 import com.rosan.installer.data.engine.parser.ModuleSourceMaterializer
+import com.rosan.installer.data.engine.parser.NativeLibraryScanner
 import com.rosan.installer.data.engine.parser.PackagePreprocessor
 import com.rosan.installer.data.engine.parser.SeekableZipReader
 import com.rosan.installer.data.engine.parser.UnifiedContainerAnalyser
@@ -24,6 +25,7 @@ import com.rosan.installer.data.engine.provider.InstalledModuleInfoProviderImpl
 import com.rosan.installer.data.engine.repository.AnalyserRepositoryImpl
 import com.rosan.installer.data.engine.repository.AppIconRepositoryImpl
 import com.rosan.installer.data.engine.repository.AppInstallerRepositoryImpl
+import com.rosan.installer.data.engine.repository.LibraryAnalysisRepositoryImpl
 import com.rosan.installer.data.engine.repository.ModuleInstallerRepositoryImpl
 import com.rosan.installer.data.engine.signature.CertificateFormatter
 import com.rosan.installer.data.engine.signature.InstalledPackageSignatureReader
@@ -37,8 +39,10 @@ import com.rosan.installer.domain.engine.provider.InstalledPackageSignatureProvi
 import com.rosan.installer.domain.engine.repository.AnalyserRepository
 import com.rosan.installer.domain.engine.repository.AppIconRepository
 import com.rosan.installer.domain.engine.repository.AppInstallerRepository
+import com.rosan.installer.domain.engine.repository.LibraryAnalysisRepository
 import com.rosan.installer.domain.engine.repository.ModuleInstallerRepository
 import com.rosan.installer.domain.engine.usecase.AnalyzeInstallStateUseCase
+import com.rosan.installer.domain.engine.usecase.AnalyzeLibrariesUseCase
 import com.rosan.installer.domain.engine.usecase.AnalyzePackageUseCase
 import com.rosan.installer.domain.engine.usecase.ApproveSessionUseCase
 import com.rosan.installer.domain.engine.usecase.ClearAppIconCacheUseCase
@@ -87,6 +91,10 @@ val engineModule = module {
     singleOf(::InstalledModuleInfoProviderImpl) { bind<InstalledModuleInfoProvider>() }
     singleOf(::UnknownSourcePermissionChecker)
     singleOf(::PlatformInstallPolicyChecker)
+
+    singleOf(::NativeLibraryScanner)
+    singleOf(::LibraryAnalysisRepositoryImpl) { bind<LibraryAnalysisRepository>() }
+    factoryOf(::AnalyzeLibrariesUseCase)
 
     // Repositories
     singleOf(::AppIconRepositoryImpl) { bind<AppIconRepository>() }

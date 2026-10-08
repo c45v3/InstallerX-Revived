@@ -19,6 +19,7 @@ import com.rosan.installer.ui.page.main.installer.InstallerViewAction
 import com.rosan.installer.ui.page.main.installer.InstallerViewModel
 import com.rosan.installer.ui.page.main.installer.components.PositionDialog
 import com.rosan.installer.ui.page.main.installer.dialog.inner.ModuleInstallSheetContent
+import com.rosan.installer.ui.page.main.installer.dialog.inner.installLibrariesDialog
 import com.rosan.installer.ui.page.main.widget.util.InstallerEventCollector
 import com.rosan.installer.ui.theme.InstallerMaterialExpressiveTheme
 import com.rosan.installer.ui.theme.InstallerTheme
@@ -119,11 +120,19 @@ fun DialogPage(session: InstallerSessionRepository, viewModel: InstallerViewMode
             }
             // Handle other non-Ready states: Show standard PositionDialog
             else if (stage !is InstallerStage.Ready) {
-                val params = dialogGenerateParams(viewModel)
+                val params = if (uiState.showLibraries && stage is InstallerStage.InstallPrepare) {
+                    installLibrariesDialog(viewModel)
+                } else {
+                    dialogGenerateParams(viewModel)
+                }
 
                 PositionDialog(
                     useBlur = useBlur,
                     onDismissRequest = {
+                        if (viewModel.uiState.value.showLibraries) {
+                            viewModel.dispatch(InstallerViewAction.HideLibraries)
+                            return@PositionDialog
+                        }
                         val currentUiState = viewModel.uiState.value
                         val currentStage = currentUiState.stage
 

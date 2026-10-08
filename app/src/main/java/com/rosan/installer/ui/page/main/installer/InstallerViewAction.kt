@@ -9,6 +9,9 @@ import com.rosan.installer.domain.session.repository.InstallerSessionRepository
 import com.rosan.installer.domain.settings.model.config.InstallerMode
 
 sealed interface InstallerViewAction {
+    data object ShowLibraries : InstallerViewAction
+    data object HideLibraries : InstallerViewAction
+    data object RetryLibraries : InstallerViewAction
     data class CollectSession(val session: InstallerSessionRepository) : InstallerViewAction
     data object PrepareClose : InstallerViewAction
     data object Close : InstallerViewAction

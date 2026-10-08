@@ -22,6 +22,7 @@ import com.rosan.installer.domain.engine.model.packageinfo.analyzePackageSignatu
 import com.rosan.installer.domain.engine.model.packageinfo.analyzePackageSignatureSelection
 import com.rosan.installer.domain.engine.model.source.DataType
 import com.rosan.installer.domain.engine.provider.InstalledPackageSignatureProvider
+import com.rosan.installer.domain.engine.usecase.AnalyzeLibrariesUseCase
 import com.rosan.installer.domain.engine.usecase.GetAppIconColorUseCase
 import com.rosan.installer.domain.engine.usecase.GetAppIconUseCase
 import com.rosan.installer.domain.engine.usecase.GetAppLabelUseCase
@@ -56,6 +57,7 @@ import timber.log.Timber
 
 class InstallerViewModel(
     private var session: InstallerSessionRepository,
+    private val analyzeLibraries: AnalyzeLibrariesUseCase,
     private val appSettingsRepo: AppSettingsRepository,
     private val getAvailableUsers: GetAvailableUsersUseCase,
     private val getAppIcon: GetAppIconUseCase,
@@ -133,6 +135,10 @@ class InstallerViewModel(
     private var originalAnalysisResults: List<PackageAnalysisResult> = emptyList()
     private var isRetryingInstall = false
 
+    private var libraryJob: Job? = null
+    private var librarySources: List<AppEntity> = emptyList()
+    private var libraryCache: LibraryPreviewState? = null
+
     private var loadingStateJob: Job? = null
     private val iconJobs = mutableMapOf<String, Job>()
     private var autoInstallJob: Job? = null
@@ -173,6 +179,12 @@ class InstallerViewModel(
 
     fun dispatch(action: InstallerViewAction) {
         when (action) {
+            InstallerViewAction.ShowLibraries -> showLibraries()
+
+            InstallerViewAction.HideLibraries -> hideLibraries()
+
+            InstallerViewAction.RetryLibraries -> showLibraries(force = true)
+
             is InstallerViewAction.CollectSession -> collectRepo(action.session)
 
             is InstallerViewAction.PrepareClose -> session.prepareClose()
@@ -383,6 +395,9 @@ class InstallerViewModel(
 
     private fun collectRepo(session: InstallerSessionRepository) {
         if (this.session !== session) packageSelectionsBeforeClear.clear()
+        hideLibraries()
+        librarySources = emptyList()
+        libraryCache = null
         this.session = session
         if (session.config.enableCustomizeUser) {
             loadAvailableUsers(session.config.authorizer, session.config.customizeAuthorizer)
@@ -514,6 +529,8 @@ class InstallerViewModel(
 
                     else -> _localState.value.currentPackageName
                 }
+
+                if (newStage !is InstallerStage.InstallPrepare) hideLibraries()
 
                 val oldPackageName = _localState.value.currentPackageName
 
@@ -693,6 +710,7 @@ class InstallerViewModel(
     private fun toast(@StringRes resId: Int) = _uiEvents.tryEmit(InstallerViewEvent.ShowToastRes(resId))
 
     private fun close() {
+        hideLibraries()
         packageSelectionsBeforeClear.clear()
         autoInstallJob?.cancel()
         collectRepoJob?.cancel()
@@ -703,6 +721,7 @@ class InstallerViewModel(
     }
 
     private fun cancel() {
+        hideLibraries()
         autoInstallJob?.cancel()
         iconJobs.values.forEach { it.cancel() }
         session.cancel()
@@ -814,7 +833,45 @@ class InstallerViewModel(
         }
     }
 
+    private fun showLibraries(force: Boolean = false) {
+        val state = _localState.value
+        if (state.stage !is InstallerStage.InstallPrepare) return
+        autoInstallJob?.cancel()
+        val apps = state.analysisResults.find { it.packageName == state.currentPackageName }
+            ?.appEntities.orEmpty().filter { it.selected }
+            .map { it.app }.filter { it is AppEntity.BaseEntity || it is AppEntity.SplitEntity }
+        libraryJob?.cancel()
+        val sameSources = apps.size == librarySources.size && apps.indices.all { apps[it] === librarySources[it] }
+        val cached = libraryCache.takeIf { sameSources && !force }
+        if (cached != null) {
+            _localState.update { it.copy(showLibraries = true, libraryPreview = cached) }
+            return
+        }
+        librarySources = apps
+        libraryCache = null
+        _localState.update { it.copy(showLibraries = true, libraryPreview = LibraryPreviewState(loading = true)) }
+        libraryJob = viewModelScope.launch {
+            val preview = try {
+                LibraryPreviewState(result = analyzeLibraries(apps))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Timber.w(error, "Library analysis failed")
+                LibraryPreviewState(failed = true)
+            }
+            libraryCache = preview.takeIf { !it.failed && it.result?.let { result -> result.failedApks.isEmpty() && !result.rulesUnavailable } == true }
+            _localState.update { it.copy(libraryPreview = preview) }
+        }
+    }
+
+    private fun hideLibraries() {
+        libraryJob?.cancel()
+        libraryJob = null
+        _localState.update { it.copy(showLibraries = false) }
+    }
+
     private fun install() {
+        hideLibraries()
         autoInstallJob?.cancel()
         Timber.d("Standard foreground installation triggered. Contains Module: $isInstallingModule")
         session.install(true)
@@ -824,7 +881,10 @@ class InstallerViewModel(
         _uiEvents.tryEmit(InstallerViewEvent.RequestUnknownSourcePermission)
     }
 
-    private fun background() = session.background(true)
+    private fun background() {
+        hideLibraries()
+        session.background(true)
+    }
 
     fun toggleSelection(packageName: String, entityToToggle: SelectInstallEntity, isMultiSelect: Boolean) {
         val currentPackage = _localState.value.analysisResults.firstOrNull { it.packageName == packageName } ?: return

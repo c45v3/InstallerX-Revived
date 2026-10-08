@@ -34,6 +34,8 @@ The full user guide, installation instructions, advanced options, system integra
 - **Modern UI:** Material 3 Expressive and Miuix interface styles, dark mode, dynamic color, advanced palettes, system icon packs, colorful dialogs, standard notifications, Live Activity, and Xiaomi HyperOS-style island notifications on supported Xiaomi devices.
 - **Safety controls:** package-name and SharedUID blacklists, signature mismatch and unknown-signature policy gates, permission preview, install flags, and one-time smart suggestions for selected blocked cases.
 
+- **Library preview:** both dialog UI styles can inspect native libraries in selected APKs and splits before installation, with offline LibChecker labels, ABI filters, search, sizes, source APKs, and tap-to-copy names. Labels are name-based hints; this is not a full SDK or security audit.
+
 ## Supported Android Versions
 
 - **Full support:** Android SDK 34 - 37.0

@@ -21,6 +21,8 @@ data class InstallerState(
     val viewSettings: InstallerViewSettings = InstallerViewSettings(),
     val showMiuixSheetRightActionSettings: Boolean = false,
     val showMiuixPermissionList: Boolean = false,
+    val showLibraries: Boolean = false,
+    val libraryPreview: LibraryPreviewState = LibraryPreviewState(),
     val navigatedFromPrepareToChoice: Boolean = false,
     val isConfirmationSubmitting: Boolean = false,
     // Used to temporarily override the persistent setting during this session
@@ -66,7 +68,7 @@ data class InstallerState(
 
             is InstallerStage.InstallingModule -> stage.isFinished
 
-            is InstallerStage.InstallPrepare -> !(showMiuixSheetRightActionSettings || showMiuixPermissionList)
+            is InstallerStage.InstallPrepare -> !(showMiuixSheetRightActionSettings || showMiuixPermissionList || showLibraries)
 
             is InstallerStage.Preparing,
             is InstallerStage.InstallWaitingUnknownSource,

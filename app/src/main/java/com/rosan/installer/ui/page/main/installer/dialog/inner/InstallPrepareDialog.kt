@@ -381,6 +381,14 @@ fun installPrepareDialog(viewModel: InstallerViewModel): DialogParams {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
+                            if (selectedEntities.any { it is AppEntity.BaseEntity || it is AppEntity.SplitEntity }) {
+                                Chip(
+                                    selected = false,
+                                    onClick = { viewModel.dispatch(InstallerViewAction.ShowLibraries) },
+                                    label = stringResource(R.string.installer_libraries),
+                                    icon = AppIcons.Info,
+                                )
+                            }
                             Chip(
                                 selected = config.autoDelete, // Read directly from config
                                 onClick = {

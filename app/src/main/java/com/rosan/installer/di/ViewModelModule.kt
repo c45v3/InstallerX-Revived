@@ -43,6 +43,7 @@ val viewModelModule = module {
     viewModel { (session: InstallerSessionRepository) ->
         InstallerViewModel(
             session = session,
+            analyzeLibraries = get(),
             get(),
             get(),
             get(),
