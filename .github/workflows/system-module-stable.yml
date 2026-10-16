@@ -7,8 +7,8 @@ on:
         description: "Upstream stable tag to build (leave empty for latest stable)"
         required: false
         type: string
-  schedule:
-    - cron: "17 */6 * * *"
+ # schedule:
+ #   - cron: "17 */6 * * *"
   push:
     branches:
       - main
